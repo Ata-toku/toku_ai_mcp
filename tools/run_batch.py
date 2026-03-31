@@ -91,16 +91,10 @@ def _validate_images(image_paths: list[str]) -> list[str]:
     return issues
 
 
-def _resolve_endpoint(endpoint: str) -> dict | None:
-    """Resolve endpoint name or URL to {url, name}."""
+def _resolve_endpoint(endpoint_name: str) -> dict | None:
+    """Resolve a named endpoint key to {url, name}. Raw URLs are NOT accepted."""
     endpoints = _load_endpoints()
-    lower = endpoint.lower().strip()
-    if lower in endpoints:
-        return endpoints[lower]
-    # treat as raw URL
-    if endpoint.startswith("http://") or endpoint.startswith("https://"):
-        return {"url": endpoint, "name": "custom", "requirements": []}
-    return None
+    return endpoints.get(endpoint_name.lower().strip())
 
 
 def _endpoint_options() -> list[dict]:
@@ -125,7 +119,7 @@ def register(mcp):
 
     @mcp.tool()
     def validate_batch_request(
-        endpoint: str = "",
+        endpoint_name: str = "",
         image_paths: list[str] = None,
         FirstName: str = "",
         LastName: str = "",
@@ -141,20 +135,24 @@ def register(mcp):
         issues that must be resolved, OR an 'ALL_VALID' status meaning
         you can proceed to run_batch_assessment with the same parameters.
 
-        WORKFLOW:
+        MANDATORY WORKFLOW — follow this exactly:
+          0. ALWAYS call list_batch_endpoints FIRST. Never skip this step.
+             Present the returned buttons to the user and wait for their selection.
           1. Gather patient info + image file paths from the user.
-          2. Call this tool to validate everything.
+          2. Call this tool with the endpoint_name chosen by the user in step 0.
           3. If issues are returned, ask the user to fix them, then re-validate.
           4. When ALL_VALID, call run_batch_assessment with the same parameters.
 
-        Endpoint can be a name ('workstation1', 'ai-cluster') or a full URL.
-        If endpoint is omitted or empty, first call list_batch_endpoints to present
-        the available options to the user as buttons, then call this tool again.
+        endpoint_name MUST be a short name key (e.g. 'ai-cluster', 'workstation1')
+        exactly as returned by list_batch_endpoints. Do NOT pass a URL here — URLs
+        are resolved internally. If endpoint_name is empty, this tool will return
+        an ENDPOINT_REQUIRED error and instruct you to call list_batch_endpoints.
         Image paths are absolute paths on the CLIENT machine (e.g. C:/images/left.png).
         At least 2 images are required (typically one per eye).
 
         Args:
-            endpoint: Target endpoint name or URL. Leave empty to trigger endpoint selection.
+            endpoint_name: Short name key of the target endpoint (e.g. 'ai-cluster').
+                           Must match a key from list_batch_endpoints. Never pass a URL.
             image_paths: List of absolute image file paths on the client machine.
             FirstName: Patient first name.
             LastName: Patient last name.
@@ -167,15 +165,16 @@ def register(mcp):
         if image_paths is None:
             image_paths = []
 
-        # 0. If no endpoint provided, ask the user to choose one
-        if not endpoint or not endpoint.strip():
+        # 0. If no endpoint_name provided, force endpoint selection via buttons
+        if not endpoint_name or not endpoint_name.strip():
             return json.dumps({
                 "status": "ENDPOINT_REQUIRED",
                 "instruction": (
                     "No endpoint was specified. "
-                    "Call vscode_askQuestions with the provided options to ask the user "
-                    "which endpoint to use, then call validate_batch_request again with "
-                    "the chosen endpoint. The recommended default is 'ai-cluster'."
+                    "Call list_batch_endpoints first, then call vscode_askQuestions with "
+                    "the returned options so the user can pick via buttons. "
+                    "Then call validate_batch_request again with the chosen endpoint_name. "
+                    "The recommended default is 'ai-cluster'."
                 ),
                 "question": {
                     "header": "Select AI Endpoint",
@@ -187,13 +186,14 @@ def register(mcp):
 
         all_issues = []
 
-        # 1. Endpoint
-        ep = _resolve_endpoint(endpoint)
+        # 1. Endpoint — only named keys accepted, never raw URLs
+        ep = _resolve_endpoint(endpoint_name)
         if ep is None:
             known = ", ".join(_load_endpoints().keys())
             all_issues.append(
-                f"Unknown endpoint: '{endpoint}'. "
-                f"Use a known name ({known}) or provide a full URL."
+                f"Unknown endpoint name: '{endpoint_name}'. "
+                f"Must be one of: {known}. "
+                f"Call list_batch_endpoints to see available options."
             )
 
         # 2. Metadata
@@ -219,6 +219,7 @@ def register(mcp):
 
         return json.dumps({
             "status": "ALL_VALID",
+            "endpoint_name": endpoint_name,
             "endpoint": ep,
             "patient": metadata,
             "image_count": len(image_paths),
@@ -230,7 +231,7 @@ def register(mcp):
 
     @mcp.tool()
     def run_batch_assessment(
-        endpoint: str,
+        endpoint_name: str,
         image_paths: list[str],
         FirstName: str,
         LastName: str,
@@ -252,7 +253,8 @@ def register(mcp):
           5. Saves the response to a JSON file.
 
         Args:
-            endpoint: Target endpoint name or URL (same as validated).
+            endpoint_name: Short name key of the target endpoint (same as validated).
+                           Must match a key from list_batch_endpoints. Never pass a URL.
             image_paths: List of absolute image file paths on the client machine.
             FirstName: Patient first name.
             LastName: Patient last name.
@@ -263,9 +265,10 @@ def register(mcp):
             SmokingStatus: Smoking status (Yes or No).
         """
         # Re-validate (safety net)
-        ep = _resolve_endpoint(endpoint)
+        ep = _resolve_endpoint(endpoint_name)
         if ep is None:
-            return json.dumps({"error": f"Unknown endpoint: '{endpoint}'. Run validate_batch_request first."})
+            known = ", ".join(_load_endpoints().keys())
+            return json.dumps({"error": f"Unknown endpoint name: '{endpoint_name}'. Must be one of: {known}. Run validate_batch_request first."})
 
         metadata = {
             "FirstName": FirstName, "LastName": LastName, "Sex": Sex,
