@@ -1,10 +1,13 @@
 """MCP tool: run a batch AI assessment via the model wrapper API.
 
-Multi-step flow:
-  Step 0 (list_batch_endpoints)   — present endpoint options as buttons (default: ai-cluster).
-  Step 1 (validate_batch_request) — validate patient metadata + image paths, return issues or OK.
-  Step 2 (run_batch_assessment)   — build & return a client-side curl script that sends the request
-                                    and validates the response against the success schema.
+OPTIMAL FLOW (follow exactly — minimise back-and-forth with the user):
+  Step 0 (list_batch_endpoints)   — show endpoint buttons (default: ai-cluster).
+                                    Simultaneously scan chat for attached images.
+  Step 1 (validate_batch_request) — if any patient fields are missing, ask ALL of them
+                                    in ONE single vscode_askQuestions call — never field by field.
+                                    Use attached image paths directly; NEVER re-ask for them.
+  Step 2 (run_batch_assessment)   — return the executable script. Do NOT call image_to_base64
+                                    separately — the script encodes images internally.
 """
 
 import json
@@ -132,28 +135,31 @@ def register(mcp):
         """Step 1: Validate a batch AI assessment request before sending.
 
         Checks patient metadata fields and image paths. Returns a list of
-        issues that must be resolved, OR an 'ALL_VALID' status meaning
-        you can proceed to run_batch_assessment with the same parameters.
+        issues or an 'ALL_VALID' status so you can call run_batch_assessment.
 
-        MANDATORY WORKFLOW — follow this exactly:
-          0. ALWAYS call list_batch_endpoints FIRST. Never skip this step.
-             Present the returned buttons to the user and wait for their selection.
-          1. Gather patient info + image file paths from the user.
-          2. Call this tool with the endpoint_name chosen by the user in step 0.
-          3. If issues are returned, ask the user to fix them, then re-validate.
-          4. When ALL_VALID, call run_batch_assessment with the same parameters.
+        MANDATORY WORKFLOW — optimised to minimise user back-and-forth:
+          0. Call list_batch_endpoints FIRST → show endpoint buttons to the user.
+          1. IMAGE PATHS: If the user attached images in the chat, read their absolute
+             file-system paths from the chat attachment context and use them directly.
+             DO NOT ask the user for image paths if images are already attached.
+          2. PATIENT INFO: If any patient fields are missing or unclear, ask for ALL
+             missing fields together in ONE single vscode_askQuestions call.
+             Never ask field by field in separate turns.
+          3. Call this tool with all gathered information (endpoint + images + patient).
+          4. If issues are returned, present them clearly and ask for corrections.
+          5. When ALL_VALID, immediately call run_batch_assessment.
+             DO NOT call image_to_base64 — the script handles encoding internally.
 
-        endpoint_name MUST be a short name key (e.g. 'ai-cluster', 'workstation1')
-        exactly as returned by list_batch_endpoints. Do NOT pass a URL here — URLs
-        are resolved internally. If endpoint_name is empty, this tool will return
-        an ENDPOINT_REQUIRED error and instruct you to call list_batch_endpoints.
-        Image paths are absolute paths on the CLIENT machine (e.g. C:/images/left.png).
-        At least 2 images are required (typically one per eye).
+        endpoint_name MUST be a short key (e.g. 'ai-cluster') from list_batch_endpoints.
+        Never pass a URL — URLs are resolved internally.
+        image_paths: absolute paths on the CLIENT machine (e.g. C:/images/left.png).
+        At least 2 images required (typically one per eye).
 
         Args:
             endpoint_name: Short name key of the target endpoint (e.g. 'ai-cluster').
                            Must match a key from list_batch_endpoints. Never pass a URL.
-            image_paths: List of absolute image file paths on the client machine.
+            image_paths: Absolute file paths on the client machine. Extract from
+                         chat attachments automatically — do NOT ask if already present.
             FirstName: Patient first name.
             LastName: Patient last name.
             Sex: Patient sex (M or F).
@@ -171,10 +177,11 @@ def register(mcp):
                 "status": "ENDPOINT_REQUIRED",
                 "instruction": (
                     "No endpoint was specified. "
-                    "Call list_batch_endpoints first, then call vscode_askQuestions with "
-                    "the returned options so the user can pick via buttons. "
-                    "Then call validate_batch_request again with the chosen endpoint_name. "
-                    "The recommended default is 'ai-cluster'."
+                    "Call list_batch_endpoints first to get the endpoint options, "
+                    "then call vscode_askQuestions with the returned options so the user picks via buttons. "
+                    "While waiting, scan the chat attachments for image file paths and note any patient "
+                    "info already provided. After endpoint selection, call validate_batch_request with "
+                    "everything in one go — do not ask for image paths if images are already attached."
                 ),
                 "question": {
                     "header": "Select AI Endpoint",
@@ -244,13 +251,16 @@ def register(mcp):
         """Step 2: Get a client-side script that sends a batch AI assessment and validates the response.
 
         ONLY call this AFTER validate_batch_request returned ALL_VALID.
+        DO NOT call image_to_base64 before this — the script reads and encodes images internally.
 
         The returned script (PowerShell or bash):
           1. Reads each image file from disk and base64-encodes it.
           2. Builds the full JSON payload.
           3. Sends a POST request to the model wrapper endpoint.
           4. Validates the response has the expected schema fields.
-          5. Saves the response to a JSON file.
+          5. Saves the response to a JSON file named batch_response_<FirstName>_<LastName>.json.
+
+        After running the script, save the output JSON to the user's specified location.
 
         Args:
             endpoint_name: Short name key of the target endpoint (same as validated).
@@ -499,11 +509,14 @@ echo "=== Done ==="
     def list_batch_endpoints() -> str:
         """List available endpoints and ask the user to choose one via buttons.
 
-        Call this FIRST in any batch assessment workflow. It loads the available
-        endpoints from the config file and instructs the assistant to present them
-        to the user as clickable buttons using vscode_askQuestions.
-
-        Always present 'ai-cluster' as the recommended default.
+        Call this FIRST in any batch assessment workflow.
+        After calling this tool, SIMULTANEOUSLY:
+          - Call vscode_askQuestions with the returned buttons so the user picks an endpoint.
+          - Scan the chat context for any attached image files and note their absolute paths.
+          - Note any patient info (name, DOB, sex, etc.) already present in the user's message.
+        After endpoint selection, ask for ALL missing patient fields in ONE vscode_askQuestions
+        call — never field by field. Then call validate_batch_request with everything at once.
+        DO NOT call image_to_base64 at any point — image encoding is handled by the run script.
         """
         endpoints = _load_endpoints()
         result = [
@@ -514,10 +527,15 @@ echo "=== Done ==="
             "endpoints": result,
             "default": _DEFAULT_ENDPOINT,
             "instruction": (
-                "Call vscode_askQuestions immediately with the question and options below "
-                "to let the user pick an endpoint via buttons. "
-                "The recommended default is 'ai-cluster'. "
-                "After the user selects, proceed with validate_batch_request."
+                "IMMEDIATELY do all of the following:
+"
+                "1. Call vscode_askQuestions with the question and options below so the user picks an endpoint via buttons.\n"
+                "2. Scan the chat attachments for any image files — extract their absolute file-system paths.\n"
+                "   DO NOT ask the user for image paths if images are already attached in the chat.\n"
+                "3. Extract any patient details (name, DOB, sex, camera, diabetes/smoking status) already mentioned.\n"
+                "4. After endpoint selection, ask for ALL missing patient fields in ONE single vscode_askQuestions call.\n"
+                "5. Then call validate_batch_request with endpoint + images + patient info all at once.\n"
+                "6. NEVER call image_to_base64 — the assessment script handles encoding internally."
             ),
             "question": {
                 "header": "Select AI Endpoint",
