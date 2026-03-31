@@ -7,6 +7,7 @@ RUN pip install --no-cache-dir .
 
 COPY server.py .
 COPY tools/ tools/
+COPY knowledge/ knowledge/
 
 EXPOSE 8000
 
