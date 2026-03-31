@@ -1,0 +1,18 @@
+{
+    "workstation1": {
+        "model_wrapper_endpoint": "http://100.73.176.1:8127/api/extended/analyse",
+        "ip_address": "100.73.176.1",
+        "name": "workstation1",
+        "requirements": [
+            "Requires access to the model wrapper service at http://100.73.176.1:8127/api/extended/analyse"
+        ]
+    },
+    "ai-cluster": {
+        "model_wrapper_endpoint": "http://default-modelwrapper-service/api/extended/analyse",
+        "ip_address": "default-modelwrapper-service",
+        "name": "ai-cluster",
+        "requirements": [
+            "Requires access to the AI cluster's model wrapper service at http://default-modelwrapper-service/api/extended/analyse"
+        ]
+    }
+}

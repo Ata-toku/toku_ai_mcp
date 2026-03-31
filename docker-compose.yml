@@ -3,5 +3,5 @@ services:
     container_name: toku-ai-mcp-container
     build: .
     ports:
-      - "8000:8000"
+      - "8093:8000"
     restart: unless-stopped

@@ -1,0 +1,52 @@
+{
+    "type": "object",
+    "properties": {
+        "FirstName": {
+            "type": "string",
+            "example": "sub1"
+        },
+        "LastName": {
+            "type": "string",
+            "example": "sub1test"
+        },
+        "Sex": {
+            "type": "string",
+            "example": "M"
+        },
+        "camera": {
+            "type": "string",
+            "example": "OPTOS"
+        },
+        "DOB": {
+            "type": "string",
+            "example": "1990/04/20"
+        },
+        "DiabetesStatus": {
+            "type": "string",
+            "example": "No"
+        },
+        "SmokingStatus": {
+            "type": "string",
+            "example": "No"
+        },
+        "batchimages": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "ImageName": {
+                        "type": "string",
+                        "example": "1.2.826.0.2.139953.3.2.2.56663.20251001150449160.323532306165343.png"
+                    },
+                    "Image64": {
+                        "type": "string",
+                        "format": "base64",
+                        "description": "Base64-encoded binary data (e.g. image)",
+                        "example": "..."
+                    }
+                }
+            },
+            "length": 2
+        }
+    }
+}
