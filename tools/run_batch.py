@@ -527,8 +527,7 @@ echo "=== Done ==="
             "endpoints": result,
             "default": _DEFAULT_ENDPOINT,
             "instruction": (
-                "IMMEDIATELY do all of the following:
-"
+                "IMMEDIATELY do all of the following:\n"
                 "1. Call vscode_askQuestions with the question and options below so the user picks an endpoint via buttons.\n"
                 "2. Scan the chat attachments for any image files — extract their absolute file-system paths.\n"
                 "   DO NOT ask the user for image paths if images are already attached in the chat.\n"
