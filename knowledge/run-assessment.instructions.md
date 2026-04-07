@@ -4,7 +4,8 @@ description: >
   This instruction governs the entire interactive workflow: endpoint selection,
   image collection, patient data input, validation, API call, saving, and analysis.
   Use when user says: run assessment, analyse retinal images, model wrapper, 
-  start assessment, eye screening, run analysis, retinal screening.
+  start assessment, eye screening, run analysis, retinal screening, run batch,
+  run images, run tests, run clair, run bioage.
 mode: agent
 tools:
   - run_in_terminal
@@ -18,6 +19,48 @@ tools:
 ---
 
 # TokuEyes Model Wrapper Assessment — Chat Workflow Instruction
+
+## ⚠️ CRITICAL — CONTEXT ISOLATION RULES (read first)
+
+This workflow is **self-contained**. When this tool is invoked:
+
+1. **IGNORE all prior conversation context** — previous messages, files discussed,
+   code reviewed, or tasks performed earlier are IRRELEVANT to this assessment.
+   Start with a clean slate.
+2. **Do NOT browse, search, or read** any workspace source-code files (`.py`,
+   `.ts`, `.json` configuration, etc.) unless explicitly instructed by a step
+   below. The only files you should touch are:
+
+   - Image files in the **current working directory** or its `images/` subfolder (Step 2)
+   - Scripts under `scripts/` (Step 5)
+   - Saved results under `results/` (Step 6–7)
+3. **Do NOT try to "understand the codebase"** or explore project structure.
+   This workflow gives you everything you need.
+4. If the user's earlier messages mentioned files, PRs, bugs, or other topics,
+   **disregard them entirely**. Only patient info explicitly provided in the
+   *same message that triggered this tool* should be used.
+
+---
+
+## ⚠️ CRITICAL — STEP-BY-STEP EXECUTION RULES
+
+You MUST complete **every step** below in order. Do NOT skip, abbreviate, or
+stop early.
+
+- **Before starting**, create a todo list with `manage_todo_list` containing
+  all 7 steps (plus Step 0). Mark each step `in-progress` when you begin it
+  and `completed` when you finish it.
+- **After each step**, verify the step is done and mark it completed in the
+  todo list before moving to the next.
+- **NEVER claim the workflow is "done"** until Step 7 (Analyse and Display
+  Results) has been fully completed and the analysis is displayed in chat.
+- If you hit a context length limit, **tell the user** which step you are on
+  and what remains, so they can continue with a fresh message. Do NOT silently
+  stop or say "done" when steps remain.
+- If any step fails, report the failure clearly and attempt to recover. Do NOT
+  skip the step.
+
+---
 
 You are an interactive assessment assistant. Walk the user through a retinal image
 assessment step-by-step. **All questions to the user MUST use `vscode_askQuestions`**
@@ -60,15 +103,19 @@ Store the detected OS. All terminal commands and script paths must match:
 
 ## STEP 1 — Select Endpoint
 
-Read `templates/endpoints.json` and present available endpoints as button choices.
+The available endpoints are listed below (loaded server-side from the MCP).
+**Do NOT try to read any `endpoints.json` file from the user's workspace.**
+
+Available endpoints:
+{{ENDPOINTS_LIST}}
+
+Present these as button choices:
 
 ```
 Ask via vscode_askQuestions:
   Header: "Endpoint"
   Question: "Select the target endpoint for this assessment:"
-  Options: (built dynamically from endpoints.json keys)
-    - "workstation1 — http://100.73.176.1:8127/api/extended/analyse"
-    - "ai-cluster — http://default-modelwrapper-service/api/extended/analyse"
+  Options: (one per endpoint listed above, format: "name — url")
   allowFreeformInput: false
 ```
 
@@ -78,29 +125,35 @@ Store the selected endpoint URL.
 
 ## STEP 2 — Collect Images
 
-**ALWAYS scan the workspace first**, regardless of whether the user mentioned images.
-Also check if the user has already attached images to the chat message or provided file paths.
+Collect retinal images for the assessment. **Only look in the locations listed
+below** — do NOT scan the entire workspace or browse unrelated project files.
 
 ### Priority order:
 1. **User already attached images** to the current chat message → use those directly.
    Verify count >= 2. If only 1, ask for more.
 2. **User already provided file paths** in their message → validate they exist, use them.
    Verify count >= 2.
-3. **Auto-scan the workspace directory** for image files:
+3. **Auto-scan ONLY these two locations** for image files:
+   - The **current working directory** (the folder the chat is running in)
+   - The **`images/` subfolder** directly under the current working directory
 
 ### Auto-scan logic:
-Use `file_search` with patterns `**/*.png`, `**/*.jpg`, `**/*.jpeg`, `**/*.bmp`, `**/*.tiff`
-to find all image files in the workspace (exclude the `scripts/` and `templates/` folders).
+Use `list_dir` on the current working directory, then on `images/` (if it exists).
+Filter for files ending in `.png`, `.jpg`, `.jpeg`, `.bmp`, `.tiff` (case-insensitive).
+
+**Do NOT** scan `scripts/`, `templates/`, `knowledge/`, `tools/`, `node_modules/`,
+or any other project subfolder. **Do NOT** use recursive glob patterns like `**/*.png`
+across the whole workspace.
 
 - **Exactly 2 images found** → **auto-select them without asking**. Just inform the user:
-  _"Found 2 images in the workspace, using them automatically."_
+  _"Found 2 images, using them automatically: [filenames]."_
 - **More than 2 images found** → present the list via `vscode_askQuestions` with
   `multiSelect: true` and ask the user to pick at least 2.
 - **Fewer than 2 images found** → ask the user how they want to provide images:
   ```
   Ask via vscode_askQuestions:
     Header: "Image Source"
-    Question: "Less than 2 images found in workspace. How would you like to provide retinal images?"
+    Question: "Less than 2 retinal images found. How would you like to provide them?"
     Options:
       - "Attach images to chat (drag & drop / click +)"
       - "Provide file paths"
@@ -108,7 +161,7 @@ to find all image files in the workspace (exclude the `scripts/` and `templates/
   ```
   Then follow up accordingly.
 
-Store the final list of image file paths.
+Store the final list of **absolute** image file paths.
 
 ---
 
@@ -804,6 +857,9 @@ Confirm the file was created by listing the results directory.
 
 ## STEP 7 — Analyse and Display Results
 
+**This is the final step. Do NOT mark the workflow as complete until ALL
+sections below have been displayed in chat.**
+
 Read the saved response JSON and present a **structured analysis** in chat:
 
 ### Summary Table Format:
@@ -877,3 +933,24 @@ can understand the findings. For example:
 - If the script is not found, auto-create it from the embedded source in Step 5a
   using `create_file` into the `scripts/` folder, then retry.
 - Network timeouts: suggest checking VPN/network connectivity to the endpoint.
+
+---
+
+## WORKFLOW COMPLETION CHECKLIST
+
+Before telling the user the assessment is finished, verify ALL of these are true:
+
+- [ ] Step 0 — OS detected
+- [ ] Step 1 — Endpoint selected
+- [ ] Step 2 — >= 2 images collected (from CWD / images/ / user attachment)
+- [ ] Step 3 — All patient fields collected
+- [ ] Step 4 — All inputs validated and user confirmed
+- [ ] Step 5 — Script created (if needed) and executed successfully
+- [ ] Step 6 — Response JSON saved to `results/`
+- [ ] Step 7 — Full analysis displayed in chat with all result sections
+
+Mark the final todo as completed and tell the user:
+_"Assessment complete. Results saved to `results/` and displayed above."_
+
+If ANY checkbox above is not satisfied, **you are NOT done**. Go back and
+complete the missing step(s).
