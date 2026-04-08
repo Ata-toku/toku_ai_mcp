@@ -3,6 +3,7 @@ from tools.base64_to_image import register as register_base64_to_image
 from tools.extract_json_schema import register as register_extract_json_schema
 from tools.ai_knowledge import register as register_ai_knowledge
 from tools.run_assessment import register as register_run_assessment
+from tools.vulnerability_form import register as register_vulnerability_form
 
 
 def register_all(mcp):
@@ -12,3 +13,4 @@ def register_all(mcp):
     register_extract_json_schema(mcp)
     register_ai_knowledge(mcp)
     register_run_assessment(mcp)
+    register_vulnerability_form(mcp)
