@@ -1,7 +1,7 @@
 services:
-  toku-ai-mcp:
-    container_name: toku-ai-mcp-container
+  venus-mcp:
+    container_name: venus-mcp-container
     build: .
     ports:
-      - "8093:8000"
+      - "9001:8000"
     restart: unless-stopped

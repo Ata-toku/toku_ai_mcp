@@ -3,11 +3,15 @@ import json
 
 def register(mcp):
     @mcp.tool()
-    def image_to_base64(
+    def standalone_image_to_base64(
         image_path: str,
         output_path: str = "",
     ) -> str:
-        """Get a ready-to-run script that converts an image file to base64 on the CLIENT machine.
+        """NOT for assessments. Only for an explicit, standalone image->Base64 request.
+
+        Do NOT use this to start or prepare a retinal assessment. The assessment
+        runner reads image files locally and creates API Base64 payloads itself.
+        Use this only for an explicit standalone conversion request.
 
         This tool does NOT process images on the server. It returns bash and
         PowerShell scripts that the agent must execute locally via run_in_terminal.

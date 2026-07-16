@@ -1,10 +1,10 @@
 [project]
 name = "toku-ai-mcp"
-version = "0.1.0"
-description = "MCP server for TokuEyes AI models and infrastructure"
+version = "0.2.0"
+description = "MCP resources, prompts, and tools for TokuEyes AI systems"
 requires-python = ">=3.10"
 dependencies = [
-    "mcp[cli]>=1.2.0",
+    "mcp[cli]>=1.26.0,<2",
     "python-docx>=1.1.2",
     "requests>=2.31.0",
 ]
