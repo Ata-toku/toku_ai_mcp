@@ -1,14 +1,16 @@
-# TokuEyes AI MCP Server
+# Venus MCP Server
 
 A streamable HTTP Model Context Protocol (MCP) server for TokuEyes AI systems,
 models, infrastructure knowledge, retinal assessment preparation, image and JSON
 utilities, and vulnerability intake workflows.
 
+The MCP server name is `Venus`.
+
 The server implements all three standard MCP primitives:
 
 | Primitive | Count | Purpose |
 |---|---:|---|
-| Tools | 12 | Search knowledge and prepare client-side operations |
+| Tools | 14 | Search knowledge, render architecture diagrams, and prepare client-side operations |
 | Resources | 3 static + 1 template | Expose documents, endpoints, and operating guides |
 | Prompts | 2 | Guide grounded answers and retinal assessments |
 
@@ -105,11 +107,13 @@ knowledge corpus, and assessment runner templates into the image.
 
 | Name | Execution | Provides |
 |---|---|---|
+| `get_architecture_diagram` | Server + client save script | Inline architecture image content plus OS-specific save scripts |
+| `list_architecture_diagrams` | Server | Available architecture images with path, title, media type, and URI |
 | `search_knowledge` | Server | Ranked source passages from the live knowledge corpus |
 | `refresh_knowledge_index` | Server | Forced rebuild and indexed document count |
 | `start_retinal_assessment` | Server | Required first tool; returns the exact first endpoint question and literal options |
 | `list_assessment_endpoints` | Server | Exact configured endpoint names for assessment selection |
-| `collect_assessment_intake` | Server/client interactive form | Native MCP elicitation for patient metadata, endpoint, and image paths |
+| `collect_assessment_intake` | Server/client interactive form | Native MCP elicitation for patient metadata and endpoint (no image-path collection) |
 | `get_assessment_intake_schema` | Server | Exact patient-intake questions, option values, and DOB format |
 | `prepare_assessment` | Preparation on server; execution on client | Validated request, OS-specific runner, and exact command |
 | `standalone_image_to_base64` | Client | PowerShell and Bash image-to-Base64 scripts |
@@ -129,6 +133,8 @@ contains:
 - `path`: path relative to `knowledge/`
 - `uri`: encoded URI that can be passed directly to `resources/read`
 - `media_type`: detected MIME type
+- `kind`: either `text` or `image`
+- `size_bytes`: present for image entries
 
 Example shape:
 
@@ -139,7 +145,8 @@ Example shape:
       "title": "AI Infrastructure Architecture",
       "path": "AI_INFRASTRUCTURE_ARCHITECTURE.md",
       "uri": "toku://knowledge/AI_INFRASTRUCTURE_ARCHITECTURE.md",
-      "media_type": "text/markdown"
+      "media_type": "text/markdown",
+      "kind": "text"
     }
   ]
 }
@@ -153,6 +160,9 @@ a complete document rather than a ranked excerpt.
 A resource template that returns one complete knowledge document. The
 `document` value is the URL-encoded relative path emitted by the catalog.
 Nested paths are encoded so the URI remains valid.
+
+For text-based entries, the resource returns UTF-8 text. For image entries, it
+returns raw bytes so MCP clients can handle the payload as binary/blob content.
 
 Example:
 
@@ -169,7 +179,7 @@ Returns the authoritative Markdown workflow for retinal assessments. It covers:
 
 - OS detection or collection
 - endpoint selection
-- patient and image-path collection
+- patient intake collection with constrained fields
 - request validation
 - confirmation of sensitive patient data
 - use of `prepare_assessment`
@@ -235,11 +245,59 @@ the exact returned command. It does not itself read images or call the API.
 
 ## Tool Reference
 
+### `get_architecture_diagram`
+
+Resolves and returns an indexed architecture diagram as inline MCP image
+content and companion client-side save scripts.
+
+Arguments:
+
+| Argument | Required | Default | Description |
+|---|---:|---:|---|
+| `name` | No | empty | Topic or filename fragment used to resolve the diagram |
+| `output_path` | No | image filename | Client-local path used by returned save scripts |
+
+Returns a two-item content payload:
+
+- Inline image content for immediate rendering in compatible MCP clients
+- A JSON block with `bash_script` and `powershell_script` to save the same
+  image on the client machine
+
+If no indexed diagram matches the requested topic, the tool raises an error and
+clients should call `list_architecture_diagrams` first.
+
+### `list_architecture_diagrams`
+
+Lists available architecture diagram images known to the index.
+
+Arguments: none.
+
+Each item includes `path`, `title`, `media_type`, `size_bytes`, and a directly
+readable knowledge `uri`.
+
+Use this tool to disambiguate user requests before calling
+`get_architecture_diagram`.
+
+### `start_retinal_assessment`
+
+Starts the assessment flow and returns the next required prompt shape.
+
+Arguments: none.
+
+The result includes:
+
+- `next_question` with the exact endpoint selection options
+- `missing_field_order` for fallback chat collection
+- hard rules for identity placeholders, image-path handling, and conversion
+  tool suppression during normal assessment flow
+
+Call this before any assessment intake tool.
+
 ### `search_knowledge`
 
-Searches all supported files under `knowledge/` and returns ranked passages.
-The index checks the filesystem before each operation and rebuilds automatically
-when its path, modified-time, and size fingerprint changes.
+Searches text knowledge documents under `knowledge/` and returns ranked
+passages. The index checks the filesystem before each operation and rebuilds
+automatically when its path, modified-time, and size fingerprint changes.
 
 Arguments:
 
@@ -258,6 +316,9 @@ Each match contains:
 
 If nothing matches, the tool returns an empty `matches` array and an explicit
 message. The tool does not generate an answer by itself.
+
+When the query overlaps an indexed architecture image topic, the response also
+includes `related_image` with a hint to call `get_architecture_diagram`.
 
 ### `refresh_knowledge_index`
 
@@ -287,11 +348,10 @@ choose a target.
 
 Arguments: none.
 
-Each returned item contains `endpoint_name`, `endpoint_url`, and
-`requirements`. Present only the literal `endpoint_name` values as choices and
-pass the selected value unchanged to `prepare_assessment`. Do not invent labels
-such as `Retinal screening`, `CLAIR`, or `BioAge`; they are assessment intents,
-not endpoint names.
+Each returned item contains only `endpoint_name`. Present only these literal
+values as choices and pass the selected value unchanged to
+`prepare_assessment`. Do not invent labels such as `Retinal screening`,
+`CLAIR`, or `BioAge`; they are assessment intents, not endpoint names.
 
 ### `get_assessment_intake_schema`
 
@@ -316,17 +376,19 @@ rendering the structured intake schema.
 
 ### `collect_assessment_intake`
 
-This optional tool uses standard MCP elicitation to open one interactive form in
-clients that explicitly advertise elicitation support. The form provides selectable controls for
-sex, camera, diabetes status, and smoking status; validates DOB as `YYYY/MM/DD`;
-and collects an endpoint. It deliberately does not ask for image paths or image
+This tool attempts standard MCP elicitation to open one interactive intake form.
+Call it immediately after `start_retinal_assessment`; the MCP SDK negotiates
+client support at runtime. The form provides selectable controls for sex,
+camera, diabetes status, and smoking status; validates DOB as `YYYY/MM/DD`; and
+collects an endpoint. It deliberately does not ask for image paths or image
 format: the client runner discovers and classifies files locally.
 
 On acceptance, it returns an `endpoint_name` and canonical `request` object for
 `prepare_assessment`. The tool never accesses images or calls the model API.
-When elicitation support is not explicitly advertised, do not call this tool.
-Ask exactly one next missing field in chat instead, and call
-`get_assessment_intake_schema` only for the next constrained question.
+When elicitation is unavailable, it returns `status` as
+`elicitation_unavailable`; then fallback to asking exactly one next missing
+field in chat and call `get_assessment_intake_schema` only for the next
+constrained question.
 
 ### Automatic Client Image Discovery
 
@@ -525,13 +587,14 @@ missing Word template return an error string.
 ## Complete Assessment Workflow
 
 1. Call `start_retinal_assessment`. Ask its exact endpoint question using only its literal options. Do not call `list_assessment_endpoints`, `standalone_image_to_base64`, or `standalone_base64_to_image`.
-2. Ask only the next missing field in chat. Call `collect_assessment_intake` only when the client explicitly advertises elicitation support.
-3. Use `list_assessment_endpoints` only outside the normal assessment-start workflow.
-4. Use `get_assessment_intake_schema` only for the next constrained question when needed.
-5. Call `prepare_assessment` with the OS, endpoint name, and request JSON. Omit image paths unless the user already gave them.
-6. Write both returned files into one client-local working directory.
-7. Run the returned command exactly from that directory.
-8. Read the printed `response_path` and summarize the result.
+2. Call `collect_assessment_intake` immediately after `start_retinal_assessment` to attempt native elicitation.
+3. If `collect_assessment_intake` returns `elicitation_unavailable`, ask only the next missing field in chat.
+4. Use `list_assessment_endpoints` only outside the normal assessment-start workflow.
+5. Use `get_assessment_intake_schema` only for the next constrained question in fallback chat mode.
+6. Call `prepare_assessment` with the OS, endpoint name, and request JSON. Omit image paths unless the user already gave them.
+7. Write all returned files into one client-local working directory.
+8. Run the returned command exactly from that directory.
+9. Read the printed `response_path` and summarize the result.
 
 `standalone_image_to_base64` and `standalone_base64_to_image` are standalone conversion utilities.
 They are not part of the assessment workflow because the client runner detects
@@ -562,6 +625,12 @@ The index recursively includes:
 - `.txt`
 - `.yaml`
 - `.yml`
+- `.png`
+- `.jpg`
+- `.jpeg`
+
+For image files, optional sidecar files with the suffix `.keywords` are used as
+extra search synonyms for architecture-diagram topic matching.
 
 Other file types, including the Word template, are not indexed as knowledge.
 JSON is parsed and normalized before indexing, so invalid JSON causes index
@@ -569,10 +638,13 @@ refresh to fail and should be corrected.
 
 ### Indexing and Ranking
 
-Documents are split primarily at Markdown headings and then into chunks of up
-to 4,000 characters. Search tokenizes paths, headings, and content and ranks
-matches using term frequency weighted by inverse chunk frequency. The index is
-in memory and guarded for concurrent access.
+Text documents are split primarily at Markdown headings and then into chunks of
+up to 4,000 characters. Search tokenizes paths, headings, and content and ranks
+matches using term frequency weighted by inverse chunk frequency. Image files
+are indexed as separate metadata entries (path, title, media type, size, and
+optional sidecar keywords) and can be discovered directly or hinted in
+`search_knowledge` responses via `related_image`. The index is in memory and
+guarded for concurrent access.
 
 The automatic fingerprint includes each supported file's relative path,
 modified timestamp, and size. A corpus change triggers a complete rebuild on
@@ -620,7 +692,7 @@ Docker Compose maps host port `8093` to container port `8000`.
 ```text
 server.py                         FastMCP server and global instructions
 tools/__init__.py                 Capability registration
-tools/knowledge_base.py           Live index, resources, search tool, QA prompt
+tools/knowledge_base.py           Live index, text/image knowledge resources, search and diagram tools, QA prompt
 tools/run_assessment.py           Assessment resources, prompt, preparation tool
 tools/image_to_base64.py          Client-side image encoding artifact generator
 tools/base64_to_image.py          Client-side image decoding artifact generator
